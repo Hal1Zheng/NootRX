@@ -87,7 +87,11 @@ bool HWLibs::processKext(KernelPatcher &patcher, size_t id, mach_vm_address_t sl
         RouteRequestPlus request {"__ZN38AMDRadeonX6000_AMDRadeonHWServicesNavi16getMatchPropertyEv",
             wrapGetMatchProperty};
         PANIC_COND(!request.route(patcher, id, slide, size), "HWServices", "Failed to route getMatchProperty");
-    } else if ((kextRadeonX6810HWLibs.loadIndex == id) || (kextRadeonX6800HWLibs.loadIndex == id)) {
+
+        return true;
+    }
+
+    if (kextRadeonX6810HWLibs.loadIndex == id || kextRadeonX6800HWLibs.loadIndex == id) {
         NootRXMain::callback->ensureRMMIO();
 
         CAILAsicCapsEntry *orgCapsTable = nullptr;
@@ -115,6 +119,15 @@ bool HWLibs::processKext(KernelPatcher &patcher, size_t id, mach_vm_address_t sl
             PANIC_COND(!request.route(patcher, id, slide, size), "HWLibs", "Failed to route psp_cmd_km_submit");
         }
 
+        if (ADDPR(debugEnabled)) {
+            RouteRequestPlus request = {"__ZN14AmdTtlServices27cosReadConfigurationSettingEPvP36cos_read_configuration_"
+                                        "setting_inputP37cos_read_configuration_setting_output",
+                wrapCosReadConfigurationSetting, this->orgCosReadConfigurationSetting,
+                kCosReadConfigurationSettingPattern, kCosReadConfigurationSettingPatternMask};
+            PANIC_COND(!request.route(patcher, id, slide, size), "HWLibs",
+                "Failed to route cosReadConfigurationSetting");
+        }
+
         if (NootRXMain::callback->attributes.isNavi22()) {
             if (NootRXMain::callback->attributes.isSonoma1404AndLater()) {
                 RouteRequestPlus request = {"_smu_11_0_7_send_message_with_parameter",
@@ -135,7 +148,7 @@ bool HWLibs::processKext(KernelPatcher &patcher, size_t id, mach_vm_address_t sl
             "Failed to enable kernel writing");
 
         *orgDeviceTypeTable = {
-            .deviceId = NootRXMain::callback->deviceID,
+            .deviceId = NootRXMain::callback->deviceId,
             .deviceType = (kextRadeonX6800HWLibs.loadIndex == id) ? 6U : 8,
         };
 
@@ -146,18 +159,18 @@ bool HWLibs::processKext(KernelPatcher &patcher, size_t id, mach_vm_address_t sl
                 orgCapsTable += 1;
                 continue;
             }
-            orgCapsTable->deviceId = NootRXMain::callback->deviceID;
-            orgCapsTable->revision = NootRXMain::callback->devRevision;
-            orgCapsTable->extRevision =
+            orgCapsTable->deviceId = NootRXMain::callback->deviceId;
+            orgCapsTable->revNo = NootRXMain::callback->devRevision;
+            orgCapsTable->emulatedRevNo =
                 static_cast<UInt32>(NootRXMain::callback->enumRevision) + NootRXMain::callback->devRevision;
-            orgCapsTable->pciRevision = NootRXMain::callback->pciRevision;
+            orgCapsTable->revId = NootRXMain::callback->pciRevision;
             orgCapsTable->caps = ddiCapsNavi2Universal;
             if (orgCapsInitTable) {
                 *orgCapsInitTable = {
                     .familyId = AMDGPU_FAMILY_NAVI,
-                    .deviceId = NootRXMain::callback->deviceID,
+                    .deviceId = NootRXMain::callback->deviceId,
                     .revision = NootRXMain::callback->devRevision,
-                    .extRevision = static_cast<UInt32>(orgCapsTable->extRevision),
+                    .extRevision = static_cast<UInt32>(orgCapsTable->emulatedRevNo),
                     .pciRevision = NootRXMain::callback->pciRevision,
                     .caps = orgCapsTable->caps,
                 };
@@ -171,7 +184,7 @@ bool HWLibs::processKext(KernelPatcher &patcher, size_t id, mach_vm_address_t sl
                 orgDevCapTable += 1;
                 continue;
             }
-            orgDevCapTable->deviceId = NootRXMain::callback->deviceID;
+            orgDevCapTable->deviceId = NootRXMain::callback->deviceId;
             orgDevCapTable->extRevision =
                 static_cast<UInt64>(NootRXMain::callback->enumRevision) + NootRXMain::callback->devRevision;
             orgDevCapTable->revision = DEVICE_CAP_ENTRY_REV_DONT_CARE;
@@ -294,6 +307,18 @@ bool HWLibs::processKext(KernelPatcher &patcher, size_t id, mach_vm_address_t sl
                 }
             }
         }
+
+        if (ADDPR(debugEnabled)) {
+            auto *targetKext =
+                NootRXMain::callback->attributes.isNavi21() ? &kextRadeonX6800HWLibs : &kextRadeonX6810HWLibs;
+            const LookupPatchPlus patches[] = {
+                {targetKext, kAtiPowerPlayServicesConstructorOriginal, kAtiPowerPlayServicesConstructorPatched, 1},
+                {targetKext, kAmdLogPspOriginal, kAmdLogPspOriginalMask, kAmdLogPspPatched, 1},
+            };
+            PANIC_COND(!LookupPatchPlus::applyAll(patcher, patches, slide, size), "HWLibs",
+                "Failed to apply debug enablement patches");
+        }
+
         return true;
     }
 
@@ -301,7 +326,8 @@ bool HWLibs::processKext(KernelPatcher &patcher, size_t id, mach_vm_address_t sl
 }
 
 const char *HWLibs::wrapGetMatchProperty() {
-    return NootRXMain::callback->attributes.isNavi21() ? "Load6800" : "Load6810";
+    if (NootRXMain::callback->attributes.isNavi21()) { return "Load6800"; }
+    return "Load6810";
 }
 
 CAILResult HWLibs::wrapPspCmdKmSubmit(void *ctx, void *cmd, void *outData, void *outResponse) {
@@ -461,4 +487,28 @@ CAILResult HWLibs::wrapSmu1107SendMessageWithParameter(void *smum, UInt32 msgId,
     if (param == 0x10000 && (msgId == 0x2A || msgId == 0x2B)) { return kCAILResultSuccess; }
     return FunctionCast(wrapSmu1107SendMessageWithParameter, callback->orgSmu1107SendMessageWithParameter)(smum, msgId,
         param);
+}
+
+CAILResult HWLibs::wrapCosReadConfigurationSetting(void *cosHandle, CosReadConfigurationSettingInput *readCfgInput,
+    CosReadConfigurationSettingOutput *readCfgOutput) {
+    if (readCfgInput != nullptr && readCfgInput->settingName != nullptr && readCfgInput->outPtr != nullptr &&
+        readCfgInput->outLen == 4) {
+        if (strncmp(readCfgInput->settingName, "PP_LogLevel", 12) == 0 ||
+            strncmp(readCfgInput->settingName, "PP_LogSource", 13) == 0 ||
+            strncmp(readCfgInput->settingName, "PP_LogDestination", 18) == 0 ||
+            strncmp(readCfgInput->settingName, "PP_LogField", 12) == 0) {
+            *static_cast<UInt32 *>(readCfgInput->outPtr) = 0xFFFFFFFF;
+            if (readCfgOutput != nullptr) { readCfgOutput->settingLen = 4; }
+            return kCAILResultSuccess;
+        }
+        if (strncmp(readCfgInput->settingName, "PP_DumpRegister", 16) == 0 ||
+            strncmp(readCfgInput->settingName, "PP_DumpSMCTable", 16) == 0 ||
+            strncmp(readCfgInput->settingName, "PP_LogDumpTableBuffers", 23) == 0) {
+            *static_cast<UInt32 *>(readCfgInput->outPtr) = 1;
+            if (readCfgOutput != nullptr) { readCfgOutput->settingLen = 4; }
+            return kCAILResultSuccess;
+        }
+    }
+    return FunctionCast(wrapCosReadConfigurationSetting, callback->orgCosReadConfigurationSetting)(cosHandle,
+        readCfgInput, readCfgOutput);
 }

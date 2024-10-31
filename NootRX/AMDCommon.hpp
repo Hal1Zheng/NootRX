@@ -108,8 +108,8 @@ constexpr UInt32 mmVGT_GS_MAX_WAVE_ID_BASE_IDX = 0;
 
 struct CAILAsicCapsEntry {
     UInt32 familyId, deviceId;
-    UInt32 revision, extRevision;
-    UInt32 pciRevision;
+    UInt32 revNo, emulatedRevNo;
+    UInt32 revId;
     UInt32 _reserved;
     const UInt32 *caps;
     const UInt32 *skeleton;
@@ -215,9 +215,20 @@ enum AMDUCodeID : UInt32 {
     kUCodeVCN1 = 0x2A,
 };
 
+struct CosReadConfigurationSettingInput {
+    const char *settingName;
+    uint32_t settingType;
+    uint32_t outLen;
+    void *outPtr;
+};
+
+struct CosReadConfigurationSettingOutput {
+    uint32_t settingLen;
+};
+
 //-------- AMD Catalyst Constants --------//
 
-constexpr UInt64 DEVICE_CAP_ENTRY_REV_DONT_CARE = 0xDEADCAFEU;
+constexpr UInt64 DEVICE_CAP_ENTRY_REV_DONT_CARE = 0xDEADCAFE;
 
 static const UInt32 ddiCapsNavi2Universal[16] = {0x800001, 0x1FE, 0x0, 0x0, 0x200, 0x8000000, 0x8000000, 0x2,
     0x200A0101, 0xA20600, 0x42040028, 0x0, 0x0, 0x0, 0x0, 0x0};
